@@ -38,13 +38,26 @@
 
 #include "open_karto/Mapper.h"
 
-#include "spa_solver.h"
+//#include "spa_solver.h"
+//#include "g2o_solver.h"
+//#include "vertigo_switchable_solver.h"
+#include "vertigo_maxmix_solver.h"
 
 #include <boost/thread.hpp>
 
 #include <string>
 #include <map>
 #include <vector>
+
+/* FIX THIS POLLUTION */
+#include <g2o/core/sparse_optimizer.h>
+#include <g2o/core/block_solver.h>
+#include <g2o/core/optimization_algorithm_gauss_newton.h>
+#include <g2o/core/optimization_algorithm_levenberg.h>
+#include <g2o/solvers/csparse/linear_solver_csparse.h>
+#include <g2o/core/factory.h>
+
+#include <g2o/types/slam2d/types_slam2d.h>
 
 // compute linear index for given map coords
 #define MAP_IDX(sx, i, j) ((sx) * (j) + (i))
@@ -94,10 +107,42 @@ class SlamKarto
     boost::mutex map_mutex_;
     boost::mutex map_to_odom_mutex_;
 
+    // ROS parameters copied to karto
+    bool use_scan_matching_;
+    bool use_scan_barycenter_;
+    double min_travel_distance_;
+    double min_travel_heading_;
+    int scan_buffer_size_;
+    double scan_buffer_max_scan_distance_;
+    double link_match_min_response_fine_;
+    double link_scan_max_distance_;
+    double loop_search_max_distance_;
+    bool do_loop_closing_;
+    int loop_match_min_chain_size_;
+    double loop_match_max_variance_coarse_;
+    double loop_match_min_response_coarse_;
+    double loop_match_min_response_fine_;
+    double corr_search_space_dim_;
+    double corr_search_space_res_;
+    double corr_search_space_smear_dev_;
+    double loop_search_space_dim_;
+    double loop_search_space_res_;
+    double loop_search_space_smear_dev_;
+    double dist_var_penalty_;
+    double angle_var_penalty_;
+    double fine_search_angle_offset_;
+    double coarse_search_angle_offset_;
+    double coarse_angle_resolution_;
+    double minimum_angle_penalty_;
+    double minimum_dist_penalty_;
+    bool use_response_expansion_;
+
     // Karto bookkeeping
     karto::Mapper* mapper_;
     karto::Dataset* dataset_;
-    SpaSolver* solver_;
+    //G2OSolver* solver_;
+    //VertigoSwitchableSolver* solver_;
+    VertigoMaxMixSolver* solver_;
     std::map<std::string, karto::LaserRangeFinder*> lasers_;
     std::map<std::string, bool> lasers_inverted_;
 
@@ -114,7 +159,8 @@ SlamKarto::SlamKarto() :
         got_map_(false),
         laser_count_(0),
         transform_thread_(NULL),
-        marker_count_(0)
+        marker_count_(0),
+        tf_(ros::Duration(1000))
 {
   map_to_odom_.setIdentity();
   // Retrieve parameters
@@ -141,13 +187,13 @@ SlamKarto::SlamKarto() :
   double transform_publish_period;
   private_nh_.param("transform_publish_period", transform_publish_period, 0.05);
 
-  // Set up advertisements and subscriptions
+    // Set up advertisements and subscriptions
   tfB_ = new tf::TransformBroadcaster();
   sst_ = node_.advertise<nav_msgs::OccupancyGrid>("map", 1, true);
   sstm_ = node_.advertise<nav_msgs::MapMetaData>("map_metadata", 1, true);
   ss_ = node_.advertiseService("dynamic_map", &SlamKarto::mapCallback, this);
-  scan_filter_sub_ = new message_filters::Subscriber<sensor_msgs::LaserScan>(node_, "scan", 5);
-  scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*scan_filter_sub_, tf_, odom_frame_, 5);
+  scan_filter_sub_ = new message_filters::Subscriber<sensor_msgs::LaserScan>(node_, "scan", 50000);
+  scan_filter_ = new tf::MessageFilter<sensor_msgs::LaserScan>(*scan_filter_sub_, tf_, odom_frame_, 50000);
   scan_filter_->registerCallback(boost::bind(&SlamKarto::laserCallback, this, _1));
   marker_publisher_ = node_.advertise<visualization_msgs::MarkerArray>("visualization_marker_array",1);
 
@@ -160,8 +206,168 @@ SlamKarto::SlamKarto() :
   mapper_ = new karto::Mapper();
   dataset_ = new karto::Dataset();
 
+  karto::ParameterVector params = mapper_->GetParameterManager()->GetParameterVector();
+  std::cout << "Karto has " << params.size() << " parameters\n";
+  for(karto::ParameterVector::iterator it = params.begin(); it != params.end(); ++it)
+  {
+    std::cout << (*it)->GetName() << ": " << (*it)->GetValueAsString() << "\n";
+  }
+
+
+  // Karto parameters
+  if(private_nh_.getParam("use_scan_matching", use_scan_matching_))
+  {
+    ROS_INFO("Setting karto parameter use_scan_matching to %d", use_scan_matching_);
+    static_cast<karto::Parameter<bool> *>(mapper_->GetParameterManager()->Get("UseScanMatching"))->SetValue(use_scan_matching_);
+  }
+  if(private_nh_.getParam("use_scan_barycenter", use_scan_barycenter_))
+  {
+    ROS_INFO("Setting karto parameter use_scan_barycenter to %d", use_scan_barycenter_);
+    static_cast<karto::Parameter<bool> *>(mapper_->GetParameterManager()->Get("UseScanBarycenter"))->SetValue(use_scan_barycenter_);
+  }
+  if(private_nh_.getParam("minimum_travel_distance", min_travel_distance_))
+  {
+    ROS_INFO("Setting karto parameter MinimumTravelDistance to %f", min_travel_distance_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("MinimumTravelDistance"))->SetValue(min_travel_distance_);
+  }
+  if(private_nh_.getParam("minimum_travel_heading", min_travel_heading_))
+  {
+    ROS_INFO("Setting karto parameter MinimumTravelHeading to %f", min_travel_heading_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("MinimumTravelHeading"))->SetValue(min_travel_heading_);
+  }
+  if(private_nh_.getParam("scan_buffer_size", scan_buffer_size_))
+  {
+    ROS_INFO("Setting karto parameter ScanBufferSize to %d", scan_buffer_size_);
+    static_cast<karto::Parameter<int> *>(mapper_->GetParameterManager()->Get("ScanBufferSize"))->SetValue(scan_buffer_size_);
+  }
+  if(private_nh_.getParam("scan_buffer_max_scan_distance", scan_buffer_max_scan_distance_))
+  {
+    ROS_INFO("Setting karto parameter ScanBufferMaximumScanDistance to %f", scan_buffer_max_scan_distance_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("ScanBufferMaximumScanDistance"))->SetValue(scan_buffer_max_scan_distance_);
+  }
+  if(private_nh_.getParam("link_match_min_response_fine", link_match_min_response_fine_))
+  {
+    ROS_INFO("Setting karto parameter LinkMatchMinimumResposeFine to %f", link_match_min_response_fine_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LinkMatchMinimumResponseFine"))->SetValue(link_match_min_response_fine_);
+  }
+  if(private_nh_.getParam("link_scan_max_distance", link_scan_max_distance_))
+  {
+    ROS_INFO("Setting karto parameter LinkScanMaximumDistance to %f", link_scan_max_distance_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LinkScanMaximumDistance"))->SetValue(link_scan_max_distance_);
+  }
+  if(private_nh_.getParam("loop_search_max_distance", loop_search_max_distance_))
+  {
+    ROS_INFO("Setting karto parameter LoopSearchMaximumDistance to %f", loop_search_max_distance_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopSearchMaximumDistance"))->SetValue(loop_search_max_distance_);
+  }
+  if(private_nh_.getParam("do_loop_closing", do_loop_closing_))
+  {
+    ROS_INFO("Setting karto parameter DoLoopClosing to %d", do_loop_closing_);
+    static_cast<karto::Parameter<bool> *>(mapper_->GetParameterManager()->Get("DoLoopClosing"))->SetValue(do_loop_closing_);
+  }
+  if(private_nh_.getParam("loop_match_min_chain_size", loop_match_min_chain_size_))
+  {
+    ROS_INFO("Setting karto parameter LoopMatchMinimumChainSize to %d", loop_match_min_chain_size_);
+    static_cast<karto::Parameter<int> *>(mapper_->GetParameterManager()->Get("LoopMatchMinimumChainSize"))->SetValue(loop_match_min_chain_size_);
+  }
+  if(private_nh_.getParam("loop_match_max_variance_coarse", loop_match_max_variance_coarse_))
+  {
+    ROS_INFO("Setting karto parameter LoopMatchMaximumVarianceCoarse to %f", loop_match_max_variance_coarse_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopMatchMaximumVarianceCoarse"))->SetValue(loop_match_max_variance_coarse_);
+  }
+  if(private_nh_.getParam("loop_match_min_response_coarse", loop_match_min_response_coarse_))
+  {
+    ROS_INFO("Setting karto parameter LoopMatchMinimumResponseCoarse to %f", loop_match_min_response_coarse_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopMatchMinimumResponseCoarse"))->SetValue(loop_match_min_response_coarse_);
+  }
+  if(private_nh_.getParam("loop_match_min_response_fine", loop_match_min_response_fine_))
+  {
+    ROS_INFO("Setting karto parameter LoopMatchMinimumResponseFine to %f", loop_match_min_response_fine_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopMatchMinimumResponseFine"))->SetValue(loop_match_min_response_fine_);
+  }
+  if(private_nh_.getParam("corr_search_space_dim", corr_search_space_dim_))
+  {
+    ROS_INFO("Setting karto parameter CorrelationSearchSpaceDimension to %f", corr_search_space_dim_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("CorrelationSearchSpaceDimension"))->SetValue(corr_search_space_dim_);
+  }
+  if(private_nh_.getParam("corr_search_space_res", corr_search_space_res_))
+  {
+    ROS_INFO("Setting karto parameter CorrelationSearchSpaceResolution to %f", corr_search_space_res_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("CorrelationSearchSpaceResolution"))->SetValue(corr_search_space_res_);
+  }
+  if(private_nh_.getParam("corr_search_space_smear_dev", corr_search_space_smear_dev_))
+  {
+    ROS_INFO("Setting karto parameter CorrelationSearchSpaceSmearDeviation to %f", corr_search_space_smear_dev_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("CorrelationSearchSpaceSmearDeviation"))->SetValue(corr_search_space_smear_dev_);
+  }
+  if(private_nh_.getParam("loop_search_space_dim", loop_search_space_dim_))
+  {
+    ROS_INFO("Setting karto parameter LoopSearchSpaceDimension to %f", loop_search_space_dim_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopSearchSpaceDimension"))->SetValue(loop_search_space_dim_);
+  }
+  if(private_nh_.getParam("loop_search_space_res", loop_search_space_res_))
+  {
+    ROS_INFO("Setting karto parameter LoopSearchSpaceResolution to %f", loop_search_space_res_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopSearchSpaceResolution"))->SetValue(loop_search_space_res_);
+  }
+  if(private_nh_.getParam("loop_search_space_smear_dev", loop_search_space_smear_dev_))
+  {
+    ROS_INFO("Setting karto parameter LoopSearchSpaceSmearDeviation to %f", loop_search_space_smear_dev_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("LoopSearchSpaceSmearDeviation"))->SetValue(loop_search_space_smear_dev_);
+  }
+  if(private_nh_.getParam("distance_variance_penalty", dist_var_penalty_))
+  {
+    ROS_INFO("Setting karto parameter DistanceVariancePenalty to %f", dist_var_penalty_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("DistanceVariancePenalty"))->SetValue(dist_var_penalty_);
+  }
+  if(private_nh_.getParam("angle_variance_penalty", angle_var_penalty_))
+  {
+    ROS_INFO("Setting karto parameter AngleVariancePenalty to %f", angle_var_penalty_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("AngleVariancePenalty"))->SetValue(angle_var_penalty_);
+  }
+  if(private_nh_.getParam("fine_search_angle_offset", fine_search_angle_offset_))
+  {
+    ROS_INFO("Setting karto parameter FineSearchAngleOffset to %f", fine_search_angle_offset_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("FineSearchAngleOffset"))->SetValue(fine_search_angle_offset_);
+  }
+  if(private_nh_.getParam("coarse_search_angle_offset", coarse_search_angle_offset_))
+  {
+    ROS_INFO("Setting karto parameter CoarseSearchAngleOffset to %f", coarse_search_angle_offset_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("CoarseSearchAngleOffset"))->SetValue(coarse_search_angle_offset_);
+  }
+  if(private_nh_.getParam("coarse_angle_resolution", coarse_angle_resolution_))
+  {
+    ROS_INFO("Setting karto parameter CoarseAngleResolution to %f", coarse_angle_resolution_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("CoarseAngleResolution"))->SetValue(coarse_angle_resolution_);
+  }
+  if(private_nh_.getParam("minimum_angle_penalty", minimum_angle_penalty_))
+  {
+    ROS_INFO("Setting karto parameter MinimumAnglePenalty to %f", minimum_angle_penalty_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("MinimumAnglePenalty"))->SetValue(minimum_angle_penalty_);
+  }
+  if(private_nh_.getParam("minimum_dist_penalty", minimum_dist_penalty_))
+  {
+    ROS_INFO("Setting karto parameter MinimumDistancePenalty to %f", minimum_dist_penalty_);
+    static_cast<karto::Parameter<double> *>(mapper_->GetParameterManager()->Get("MinimumDistancePenalty"))->SetValue(minimum_dist_penalty_);
+  }
+  if(private_nh_.getParam("use_response_expansion", use_response_expansion_))
+  {
+    ROS_INFO("Setting karto parameter UseResponseExpansion to %d", use_response_expansion_);
+    static_cast<karto::Parameter<bool> *>(mapper_->GetParameterManager()->Get("UseResponseExpansion"))->SetValue(use_response_expansion_);
+  }
+
+  params = mapper_->GetParameterManager()->GetParameterVector();
+  std::cout << "\n\nNow Karto has " << params.size() << " parameters\n";
+  for(karto::ParameterVector::iterator it = params.begin(); it != params.end(); ++it)
+  {
+    std::cout << (*it)->GetName() << ": " << (*it)->GetValueAsString() << "\n";
+  }
+
+
   // Set solver to be used in loop closure
-  solver_ = new SpaSolver();
+ // solver_ = new SpaSolver();
+  //solver_ = new VertigoSwitchableSolver();
+  solver_ = new VertigoMaxMixSolver();
   mapper_->SetScanSolver(solver_);
 }
 
@@ -319,7 +525,7 @@ SlamKarto::getOdomPose(karto::Pose2& karto_pose, const ros::Time& t)
   return true;
 }
 
-void
+/*void
 SlamKarto::publishGraphVisualization()
 {
   std::vector<float> graph;
@@ -399,6 +605,17 @@ SlamKarto::publishGraphVisualization()
 
   marker_publisher_.publish(marray);
 }
+*/
+
+/* Publish the graph */
+void SlamKarto::publishGraphVisualization()
+{
+ visualization_msgs::MarkerArray marray;
+ solver_->publishGraphVisualization(marray); 
+ marker_publisher_.publish(marray);
+}
+
+
 
 void
 SlamKarto::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
