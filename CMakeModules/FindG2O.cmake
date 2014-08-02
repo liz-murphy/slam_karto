@@ -18,7 +18,7 @@ IF(UNIX)
 
   MESSAGE(STATUS "Searching for g2o ...")
   FIND_PATH(G2O_INCLUDE_DIR
-    NAMES core math_groups types
+    NAMES core math_groups types 
     PATHS /usr/local /usr
     PATH_SUFFIXES include/g2o include)
 
@@ -40,6 +40,10 @@ IF(UNIX)
     PATH_SUFFIXES lib)
   FIND_LIBRARY(G2O_TYPES_SLAM3D_LIB     
     NAMES g2o_types_slam3d 
+    PATHS /usr/local /usr 
+    PATH_SUFFIXES lib) 
+  FIND_LIBRARY(G2O_TYPES_DATA_LIB     
+    NAMES g2o_types_data
     PATHS /usr/local /usr 
     PATH_SUFFIXES lib)
   FIND_LIBRARY(G2O_SOLVER_CHOLMOD_LIB   
@@ -66,6 +70,8 @@ IF(UNIX)
   SET(G2O_LIBRARIES ${G2O_CSPARSE_EXTENSION_LIB}
                     ${G2O_CORE_LIB}           
                     ${G2O_STUFF_LIB}          
+                    ${G2O_TYPES_DATA_LIB}   
+                    ${G2O_TYPES_SCLAM2D_LIB}   
                     ${G2O_TYPES_SLAM2D_LIB}   
                     ${G2O_TYPES_SLAM3D_LIB}   
                     ${G2O_SOLVER_CHOLMOD_LIB} 
