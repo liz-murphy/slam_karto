@@ -167,7 +167,10 @@ SlamKarto::SlamKarto() :
   // Retrieve parameters
   ros::NodeHandle private_nh_("~");
   if(!private_nh_.getParam("odom_frame", odom_frame_))
+  {
     odom_frame_ = "odom";
+  }
+  ROS_INFO("Odometry frame is %s", odom_frame_.c_str());
   if(!private_nh_.getParam("map_frame", map_frame_))
     map_frame_ = "map";
   if(!private_nh_.getParam("base_frame", base_frame_))
@@ -325,6 +328,7 @@ SlamKarto::SlamKarto() :
 
   solver_ = SolverFactory::NewSolver(solver_type_);
   mapper_->SetScanSolver(solver_);
+  solver_->setMapFrame(map_frame_);
 }
 
 SlamKarto::~SlamKarto()

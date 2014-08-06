@@ -26,13 +26,16 @@ add_definitions(${EIGEN_DEFINITIONS})
 
 catkin_package()
 
-add_library(slam_karto_g2o src/g2o/g2o_solver.cpp src/g2o/vertigo_switchable_solver.cpp src/g2o/vertigo_maxmix_solver.cpp src/spa_solver.cpp)
+add_library(g2o_calibration ${G2O_LIB_TYPE} calibration/gm2dl_io.cpp calibration/edge_se2_pure_calib.cpp calibration/closed_form_calibration.cpp calibration/sclam_pure_calibration.cpp calibration/sclam_helpers.cpp calibration/types_sclam2d.cpp src/g2o/types/data/robot_laser_sclam.cpp)
 #add_executable(slam_karto src/g2o/g2o_solver.cpp src/g2o/vertigo_switchable_solver.cpp src/g2o/vertigo_maxmix_solver.cpp src/slam_karto.cpp)
+add_library(slam_karto_g2o src/g2o/g2o_solver.cpp src/g2o/vertigo_switchable_solver.cpp src/g2o/vertigo_maxmix_solver.cpp src/spa_solver.cpp)
 add_executable(slam_karto src/slam_karto.cpp)
+add_executable(sclam calibration/sclam_pure_calibration.cpp)
 message("G2O Libraries: " ${G2O_LIBRARIES})
-target_link_libraries(slam_karto_g2o ${catkin_LIBRARIES} ${CSPARSE_LIBRARY} ${G2O_LIBRARIES})
+target_link_libraries(g2o_calibration ${catkin_LIBRARIES} ${CSPARSE_LIBRARY} ${G2O_LIBRARIES})
+target_link_libraries(slam_karto_g2o ${catkin_LIBRARIES} ${CSPARSE_LIBRARY} ${G2O_LIBRARIES} g2o_calibration)
 target_link_libraries(slam_karto slam_karto_g2o)
-
+target_link_libraries(sclam g2o_calibration)
 install(TARGETS slam_karto
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

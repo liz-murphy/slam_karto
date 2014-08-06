@@ -34,6 +34,10 @@ IF(UNIX)
     NAMES g2o_stuff 
     PATHS /usr/local /usr 
     PATH_SUFFIXES lib)
+  FIND_LIBRARY(G2O_TYPES_SCLAM2D_LIB     
+    NAMES g2o_types_sclam2d 
+    PATHS /usr/local /usr 
+    PATH_SUFFIXES lib)
   FIND_LIBRARY(G2O_TYPES_SLAM2D_LIB     
     NAMES g2o_types_slam2d 
     PATHS /usr/local /usr 
