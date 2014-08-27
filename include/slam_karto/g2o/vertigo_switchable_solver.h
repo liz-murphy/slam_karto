@@ -15,12 +15,15 @@ class EdgeSwitchPrior;
 class VertigoSwitchableSolver : public G2OSolver 
 {
   public:
-  VertigoSwitchableSolver():_switch_id(10000){}; // Nasty hack
+  VertigoSwitchableSolver(); // Nasty hack
   void AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge);
-  void publishGraphVisualization(visualization_msgs::MarkerArray &marray);
+  virtual bool getEdgeStatus(g2o::EdgeSE2* edge);
+  //virtual void getLoopClosures(visualization_msgs::MarkerArray &marray);
+//  void publishGraphVisualization(visualization_msgs::MarkerArray &marray);
   void Compute();
   private:
     int _switch_id;
+    double Ksi_; // covariance on switch constraint (DEFAULT: 1, 0.1 works in real datasets? (MM vs RRR vs Switchable paper)
 };
 
 #endif // KARTO_VERTIGO_SWITCHABLE_SOLVER_H

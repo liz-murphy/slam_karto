@@ -78,6 +78,7 @@ class SlamKarto
     bool updateMap();
     void publishTransform();
     void publishLoop(double transform_publish_period);
+    void visLoop(double vis_publish_period);
     void publishGraphVisualization();
 
     // ROS handles
@@ -138,6 +139,7 @@ class SlamKarto
     bool use_response_expansion_;
 
     std::string solver_type_;
+    bool use_switchable_markers_; 
 
     // Karto bookkeeping
     karto::Mapper* mapper_;
@@ -150,6 +152,7 @@ class SlamKarto
     bool got_map_;
     int laser_count_;
     boost::thread* transform_thread_;
+    boost::thread* vis_thread_;
     tf::Transform map_to_odom_;
     unsigned marker_count_;
     bool inverted_laser_;
@@ -159,6 +162,7 @@ SlamKarto::SlamKarto() :
         got_map_(false),
         laser_count_(0),
         transform_thread_(NULL),
+        vis_thread_(NULL),
         marker_count_(0),
         tf_(ros::Duration(1000)),
         init_time_(false)
@@ -190,8 +194,15 @@ SlamKarto::SlamKarto() :
   }
   if(!private_nh_.getParam("solver_type", solver_type_))
     solver_type_ = "SPA";
+
+  // allow loop edges to be switched on/off via rviz
+  if(!private_nh_.getParam("use_switchable_markers", use_switchable_markers_))
+    use_switchable_markers_ = false;
+  
   double transform_publish_period;
   private_nh_.param("transform_publish_period", transform_publish_period, 0.05);
+  double vis_publish_period;
+  private_nh_.param("vis_publish_period", vis_publish_period, 2.0);
 
     // Set up advertisements and subscriptions
   tfB_ = new tf::TransformBroadcaster();
@@ -327,8 +338,12 @@ SlamKarto::SlamKarto() :
   }
 
   solver_ = SolverFactory::NewSolver(solver_type_);
+  solver_->useSwitchableMarkers(use_switchable_markers_);
   mapper_->SetScanSolver(solver_);
   solver_->setMapFrame(map_frame_);
+ 
+  // Start up publishing thread
+  vis_thread_ = new boost::thread(boost::bind(&SlamKarto::visLoop, this, vis_publish_period));
 }
 
 SlamKarto::~SlamKarto()
@@ -337,6 +352,11 @@ SlamKarto::~SlamKarto()
   {
     transform_thread_->join();
     delete transform_thread_;
+  }
+  if(vis_thread_)
+  {
+    vis_thread_->join();
+    delete vis_thread_;
   }
   if (scan_filter_)
     delete scan_filter_;
@@ -362,6 +382,20 @@ SlamKarto::publishLoop(double transform_publish_period)
   while(ros::ok())
   {
     publishTransform();
+    r.sleep();
+  }
+}
+
+void
+SlamKarto::visLoop(double vis_publish_period)
+{
+  if(vis_publish_period == 0)
+    return;
+
+  ros::Rate r(1.0 / vis_publish_period);
+  while(ros::ok())
+  {
+    publishGraphVisualization();
     r.sleep();
   }
 }

@@ -17,6 +17,23 @@
 G2O_USE_TYPE_GROUP(slam2d)
 G2O_USE_TYPE_GROUP(vertigo)
 
+bool VertigoMaxMixSolver::getEdgeStatus(g2o::EdgeSE2* edge)
+{
+  EdgeSE2MaxMixture* edge_maxmix = dynamic_cast<EdgeSE2MaxMixture*>(edge);
+ 
+  bool status = true;
+
+  if(edge_maxmix != NULL)
+  {
+    // Switchable loop closure
+    if(edge_maxmix->nullHypothesisMoreLikely) // switched off
+    {
+      status = false;
+    }
+  }
+  return status;
+}
+/*
 void VertigoMaxMixSolver::publishGraphVisualization(visualization_msgs::MarkerArray &marray)
 {
   visualization_msgs::Marker m;
@@ -151,7 +168,7 @@ void VertigoMaxMixSolver::publishGraphVisualization(visualization_msgs::MarkerAr
       id++;
     }
   }
-}
+}*/
 
 void VertigoMaxMixSolver::AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge)
 {

@@ -16,10 +16,45 @@
 
 #include <slam_karto/g2o/types/data/robot_laser_sclam.h>
 
+#include <ros/ros.h>
+#include <ros/console.h>
+
 G2O_USE_TYPE_GROUP(slam2d)
 G2O_USE_TYPE_GROUP(vertigo)
 
-void VertigoSwitchableSolver::publishGraphVisualization(visualization_msgs::MarkerArray &marray)
+VertigoSwitchableSolver::VertigoSwitchableSolver() : _switch_id(10000)
+{
+  // Read in Ksi parameter
+  ros::NodeHandle nh("~");
+  if(!nh.hasParam("Ksi"))
+  {
+    ROS_ERROR("Could not find a Ksi parameter");
+  }
+  else
+  {
+    nh.getParam("Ksi", Ksi_);
+    ROS_INFO("Switchable covariance is %f", Ksi_);
+  }
+
+}
+
+bool VertigoSwitchableSolver::getEdgeStatus(g2o::EdgeSE2* edge)
+{
+  EdgeSE2Switchable* edge_switch = dynamic_cast<EdgeSE2Switchable*>(edge);
+ 
+  bool status = true;
+
+  if(edge_switch != NULL)
+  {
+      VertexSwitchLinear *v3 = dynamic_cast<VertexSwitchLinear *>(edge_switch->vertices()[2]);
+      if(v3->x() < 0.5) // switched off
+      {
+        status = false;
+      }
+  }
+  return status;
+}
+/*void VertigoSwitchableSolver::publishGraphVisualization(visualization_msgs::MarkerArray &marray)
 {
   visualization_msgs::Marker m;
   m.header.frame_id = map_frame_id_;
@@ -154,7 +189,7 @@ void VertigoSwitchableSolver::publishGraphVisualization(visualization_msgs::Mark
       id++;
     }
   }
-}
+}*/
 
 void VertigoSwitchableSolver::AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge)
 {
@@ -201,7 +236,7 @@ void VertigoSwitchableSolver::AddConstraint(karto::Edge<karto::LocalizedRangeSca
     edge_prior->vertices()[0] = optimizer_->vertex(_switch_id);
     edge_prior->setMeasurement(1.0);
     //edge_prior->setMeasurement(0.0);
-    edge_prior->setInformation(Eigen::MatrixXd::Identity(1,1));
+    edge_prior->setInformation((1./Ksi_)*Eigen::MatrixXd::Identity(1,1));
     optimizer_->addEdge(edge_prior);
 
     // Create a switchable edge
@@ -283,7 +318,5 @@ void VertigoSwitchableSolver::Compute()
   
   std::cout << "done." << std::endl;
   optimizer_->save("after_optimization.g2o");
-  
 }
-
 

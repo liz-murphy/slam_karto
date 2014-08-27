@@ -16,6 +16,7 @@ find_package(catkin REQUIRED
     tf
     visualization_msgs
     vertigo_slam
+    interactive_markers
 )
 find_package(Eigen REQUIRED)
 find_package(SuiteSparse REQUIRED)

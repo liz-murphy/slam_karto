@@ -12,7 +12,8 @@ class VertigoMaxMixSolver : public G2OSolver
 {
   public:
   void AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge);
-  void publishGraphVisualization(visualization_msgs::MarkerArray &marray);
+  //void publishGraphVisualization(visualization_msgs::MarkerArray &marray);
+  virtual bool getEdgeStatus(g2o::EdgeSE2* edge);
 };
 
 #endif // KARTO_VERTIGO_G2OSOLVER_H
