@@ -28,7 +28,8 @@ VertigoSwitchableSolver::VertigoSwitchableSolver() : _switch_id(10000)
   ros::NodeHandle nh("~");
   if(!nh.hasParam("Ksi"))
   {
-    ROS_ERROR("Could not find a Ksi parameter");
+    Ksi_ = 1.0;
+    ROS_ERROR("Could not find a Ksi parameter, setting to default 1.0");
   }
   else
   {
@@ -38,7 +39,7 @@ VertigoSwitchableSolver::VertigoSwitchableSolver() : _switch_id(10000)
 
 }
 
-bool VertigoSwitchableSolver::getEdgeStatus(g2o::EdgeSE2* edge)
+bool VertigoSwitchableSolver::getEdgeStatus(g2o::OptimizableGraph::Edge* edge)
 {
   EdgeSE2Switchable* edge_switch = dynamic_cast<EdgeSE2Switchable*>(edge);
  
@@ -54,142 +55,6 @@ bool VertigoSwitchableSolver::getEdgeStatus(g2o::EdgeSE2* edge)
   }
   return status;
 }
-/*void VertigoSwitchableSolver::publishGraphVisualization(visualization_msgs::MarkerArray &marray)
-{
-  visualization_msgs::Marker m;
-  m.header.frame_id = map_frame_id_;
-  m.header.stamp = ros::Time::now();
-  m.id = 0;
-  m.ns = "karto";
-  m.type = visualization_msgs::Marker::SPHERE;
-  m.pose.position.x = 0.0;
-  m.pose.position.y = 0.0;
-  m.pose.position.z = 0.0;
-  m.scale.x = 0.15;
-  m.scale.y = 0.15;
-  m.scale.z = 0.15;
-  m.color.r = 1.0;
-  m.color.g = 0;
-  m.color.b = 0.0;
-  m.color.a = 1.0;
-  m.lifetime = ros::Duration(0);
-
-  visualization_msgs::Marker edge;
-  edge.header.frame_id = map_frame_id_;
-  edge.header.stamp = ros::Time::now();
-  edge.action = visualization_msgs::Marker::ADD;
-  edge.ns = "karto";
-  edge.id = 0;
-  edge.type = visualization_msgs::Marker::LINE_STRIP;
-  edge.scale.x = 0.1;
-  edge.scale.y = 0.1;
-  edge.scale.z = 0.1;
-  edge.color.a = 1.0;
-  edge.color.r = 0.0;
-  edge.color.g = 0.0;
-  edge.color.b = 1.0;
-
-  visualization_msgs::Marker loop_edge;
-  loop_edge.header.frame_id = map_frame_id_;
-  loop_edge.header.stamp = ros::Time::now();
-  loop_edge.action = visualization_msgs::Marker::ADD;
-  loop_edge.ns = "karto";
-  loop_edge.id = 0;
-  loop_edge.type = visualization_msgs::Marker::LINE_STRIP;
-  loop_edge.scale.x = 0.1;
-  loop_edge.scale.y = 0.1;
-  loop_edge.scale.z = 0.1;
-  loop_edge.color.a = 1.0;
-  loop_edge.color.r = 1.0;
-  loop_edge.color.g = 0.0;
-  loop_edge.color.b = 1.0;
-
-  int loop_id = 0;
-  int id = 0;
-  m.action = visualization_msgs::Marker::ADD;
-
-  std::set<int> vertex_ids;
-  for(g2o::SparseOptimizer::EdgeSet::iterator edge_it = optimizer_->edges().begin(); edge_it != optimizer_->edges().end(); ++edge_it)
-  {
-    EdgeSE2Switchable* edge_switch = dynamic_cast<EdgeSE2Switchable*>(*edge_it);
-
-    int id1, id2;
-    g2o::VertexSE2* v1, *v2;
-
-    bool is_loop_edge;
-    double alpha;
-
-    if(edge_switch != NULL)
-    {
-      // Switchable loop closure
-      v1 = dynamic_cast<g2o::VertexSE2 *>(edge_switch->vertices()[0]);
-      v2 = dynamic_cast<g2o::VertexSE2 *>(edge_switch->vertices()[1]);
-      VertexSwitchLinear *v3 = dynamic_cast<VertexSwitchLinear *>(edge_switch->vertices()[2]);
-      loop_edge.color.a = 1.0;
-      if(v3->x() < 0.5) // switched off
-      {
-        loop_edge.color.a = 0.25;
-      }
-      is_loop_edge = true;
-    }
-    else
-    {
-      g2o::EdgeSE2* edge_odo = dynamic_cast<g2o::EdgeSE2*>(*edge_it);
-      if(edge_odo != NULL)
-      {
-        v1 = dynamic_cast<g2o::VertexSE2 *>(edge_odo->vertices()[0]);
-        v2 = dynamic_cast<g2o::VertexSE2 *>(edge_odo->vertices()[1]);
-        is_loop_edge = false;
-      }
-    }
-    geometry_msgs::Point p1, p2;
-    p1.x = v1->estimate()[0];
-    p1.y = v1->estimate()[1];
-    p2.x = v2->estimate()[0];
-    p2.y = v2->estimate()[1];
-
-    if(is_loop_edge)
-    {
-      loop_edge.points.clear();
-      loop_edge.points.push_back(p1);
-      loop_edge.points.push_back(p2);
-      loop_edge.id = id;
-      marray.markers.push_back(visualization_msgs::Marker(loop_edge));
-    }
-    else
-    {
-      edge.points.clear();
-      edge.points.push_back(p1);
-      edge.points.push_back(p2);
-      edge.id = id;
-      marray.markers.push_back(visualization_msgs::Marker(edge));
-    }
-    id++;
-
-    // Check the vertices exist, if not add
-    if( vertex_ids.find(v1->id()) == vertex_ids.end() )
-    {
-      // Add the vertex to the marker array 
-      m.id = id;
-      m.pose.position.x = p1.x;
-      m.pose.position.y = p1.y;
-      vertex_ids.insert(v1->id());
-      marray.markers.push_back(visualization_msgs::Marker(m));
-      id++;
-    }
-    // Check the vertices exist, if not add
-    if( vertex_ids.find(v2->id()) == vertex_ids.end() )
-    {
-      // Add the vertex to the marker array 
-      m.id = id;
-      m.pose.position.x = p2.x;
-      m.pose.position.y = p2.y;
-      vertex_ids.insert(id2);
-      marray.markers.push_back(visualization_msgs::Marker(m));
-      id++;
-    }
-  }
-}*/
 
 void VertigoSwitchableSolver::AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge)
 {
@@ -274,29 +139,8 @@ void VertigoSwitchableSolver::Compute()
   std::cout << "done." << std::endl;
   std::cout << "G2OSolver::Compute(): running optimizer..." << std::flush;
   corrections_.clear();
- 
-  // Switch everything back on
-
-  int switchable_edges = 0;
-
-  for(g2o::SparseOptimizer::EdgeSet::iterator edge_it = optimizer_->edges().begin(); edge_it != optimizer_->edges().end(); ++edge_it)
-  {
-    EdgeSwitchPrior* edge_prior= dynamic_cast<EdgeSwitchPrior*>(*edge_it);
-
-    if(edge_prior!=NULL)
-    {
-      switchable_edges++;
-      VertexSwitchLinear *v3 = dynamic_cast<VertexSwitchLinear *>(edge_prior->vertices()[0]);
-      double score = 1.0;
-      v3->setEstimate(score); // switch it back on
-      edge_prior->setMeasurement(1.0);
-      edge_prior->setInformation(Eigen::MatrixXd::Identity(1,1));
-    }
-  }
-  
-  std::cout << "Switched " << switchable_edges << " back on\n";
-  optimizer_->initializeOptimization();
-  optimizer_->optimize(30);
+  optimizer_->initializeOptimization(0);
+  optimizer_->optimize(optimization_iterations_,online_optimization_);
   
   for(size_t i = 0; i < vertices_.size(); ++i)
   {
@@ -320,3 +164,27 @@ void VertigoSwitchableSolver::Compute()
   optimizer_->save("after_optimization.g2o");
 }
 
+bool VertigoSwitchableSolver::turnEdgeOn(g2o::OptimizableGraph::Edge* e)
+{
+  // There are 2 edges associated with each loop closure (ternary and unary)
+  // e is the reference to the ternary edge which contains the vertex of the unary edge
+
+  EdgeSE2Switchable* ternary_edge = dynamic_cast<EdgeSE2Switchable *>(e);
+  VertexSwitchLinear* switch_vertex = (VertexSwitchLinear*)ternary_edge->vertices()[2];
+
+  for(g2o::HyperGraph::EdgeSet::iterator it = switch_vertex->edges().begin(); it != switch_vertex->edges().end(); ++it)
+  {
+    ((g2o::OptimizableGraph::Edge*)*it)->setLevel(0);
+  }
+}
+
+bool VertigoSwitchableSolver::turnEdgeOff(g2o::OptimizableGraph::Edge* e)
+{
+  EdgeSE2Switchable* ternary_edge = dynamic_cast<EdgeSE2Switchable *>(e);
+  VertexSwitchLinear* switch_vertex = (VertexSwitchLinear*)ternary_edge->vertices()[2];
+
+  for(g2o::HyperGraph::EdgeSet::iterator it = switch_vertex->edges().begin(); it != switch_vertex->edges().end(); ++it)
+  {
+    ((g2o::OptimizableGraph::Edge*)*it)->setLevel(1);
+  }
+}

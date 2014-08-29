@@ -39,6 +39,23 @@ G2O_USE_TYPE_GROUP(calibration)
 
 G2OSolver::G2OSolver()
 {
+  ros::NodeHandle nh("~");
+  if(!nh.getParam("g2o_online_optimization",online_optimization_))
+  {
+    online_optimization_=false;
+    ROS_INFO("Not using online optimization");
+  }
+  else
+    ROS_INFO("Online optimization set to %s", online_optimization_ ? "true" : "false");
+
+  if(!nh.getParam("g2o_num_iterations",optimization_iterations_))
+  {
+    optimization_iterations_=30;
+    ROS_INFO("Using default number of iterations: %d", optimization_iterations_);
+  }
+  else
+    ROS_INFO("Using %d g2o iterations", optimization_iterations_);
+
   calibration_debug_ = false;
   optimizer_ = new g2o::SparseOptimizer();
 
@@ -54,8 +71,6 @@ G2OSolver::G2OSolver()
   optimizer_->setAlgorithm(solverGauss);
 
   server_.reset( new interactive_markers::InteractiveMarkerServer("loop_controls","",false) );
-
-  optimized_since_last_visualization_ = false;
 }
 
 G2OSolver::~G2OSolver()
@@ -80,48 +95,28 @@ void G2OSolver::Compute()
   std::cout << "done." << std::endl;
   std::cout << "G2OSolver::Compute(): running optimizer..." << std::flush;
   corrections_.clear();
-  //typedef std::vector<sba::Node2d, Eigen::aligned_allocator<sba::Node2d> > NodeVector;
 
-  optimizer_->initializeOptimization();
-  optimizer_->optimize(50);
+  optimizer_->initializeOptimization(0);  // ignore level 1 vertices
+  optimizer_->optimize(optimization_iterations_,online_optimization_);
 
   for (size_t i = 0; i < vertices_.size(); ++i)
   {
     const g2o::SE2& estimate = vertices_[i]->estimate();
     karto::Pose2 pose(estimate.translation().x(), estimate.translation().y(), estimate.rotation().angle());
     corrections_.push_back(std::make_pair(vertices_[i]->id(), pose));
-   
-    // Update the user data
-    /*if(vertices_[i]->userData() != NULL)
-    {
-    }*/
   }
   optimizer_->save("after_optimization.g2o");
   std::cout << "G2OSolver::Compute(): optimization done ..." << std::flush;
-
-  optimized_since_last_visualization_ = true;
-  /*
-  g2o::OptimizableGraph::VertexContainer points;
-  for (
-      g2o::OptimizableGraph::VertexIDMap::const_iterator it = optimizer_->vertices().begin(); 
-      it != optimizer_->vertices().end(); ++it) 
-  {
-    g2o::OptimizableGraph::Vertex* v = static_cast<g2o::OptimizableGraph::Vertex*>(it->second);
-    const g2o::SE2& estimate = v->estimate();
-    karto::Pose2 pose(estimate.translation().x(), estimate.translation().y(), estimate.rotation().angle());
-  }
-  */
 }
 
 void G2OSolver::AddNode(karto::Vertex<karto::LocalizedRangeScan>* pVertex)
 {
   karto::Pose2 pose = pVertex->GetObject()->GetCorrectedPose();
-  //Eigen::Vector3d vector(pose.GetX(), pose.GetY(), pose.GetHeading());
-  //m_Spa.addNode(vector, pVertex->GetObject()->GetUniqueId());
   g2o::VertexSE2* vertex = new g2o::VertexSE2();
   vertex->setId(pVertex->GetObject()->GetUniqueId());
   g2o::SE2 p(pose.GetX(), pose.GetY(), pose.GetHeading());
   vertex->setEstimate(p);
+  
   // fix first vertex
   if (vertices_.size() == 0)
   {
@@ -137,7 +132,6 @@ void G2OSolver::AddNode(karto::Vertex<karto::LocalizedRangeScan>* pVertex)
     readings.clear();
     rl->setRemissions(readings);
     karto::Pose2 odomPose = pVertex->GetObject()->GetOdometricPose();
-    //karto::Pose2 odomPose = pVertex->GetObject()->GetCorrectedPose();
     g2o::SE2 pOdom(odomPose.GetX(), odomPose.GetY(), odomPose.GetHeading());
     rl->setOdomPose(pOdom);
     rl->setLaserParams(*lp);
@@ -158,7 +152,6 @@ void G2OSolver::AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge)
   karto::LinkInfo* pLinkInfo = (karto::LinkInfo*)(pEdge->GetLabel());
 
   karto::Pose2 diff = pLinkInfo->GetPoseDifference();
-  //Eigen::Vector3d mean(diff.GetX(), diff.GetY(), diff.GetHeading());
   g2o::SE2 motion(diff.GetX(), diff.GetY(), diff.GetHeading());
 
   karto::Matrix3 precisionMatrix = pLinkInfo->GetCovariance().Inverse();
@@ -169,8 +162,6 @@ void G2OSolver::AddConstraint(karto::Edge<karto::LocalizedRangeScan>* pEdge)
   m(1,1) = precisionMatrix(1,1);
   m(1,2) = m(2,1) = precisionMatrix(1,2);
   m(2,2) = precisionMatrix(2,2);
-
-  //m_Spa.addConstraint(pSource->GetUniqueId(), pTarget->GetUniqueId(), mean, m);
 
   g2o::EdgeSE2* edge = new g2o::EdgeSE2();
   edge->vertices()[0] = optimizer_->vertices().find(pSource->GetUniqueId())->second;
@@ -195,23 +186,14 @@ void G2OSolver::getGraph(std::vector<float> &g)
   }
 }
 
-void G2OSolver::publishGraphVisualization(visualization_msgs::MarkerArray &marray)
-{
-  if(optimized_since_last_visualization_)
-  {
-    getLoopClosures(marray);
-    optimized_since_last_visualization_ = true;
-  }
-  getOdometryGraph(marray);
-}
-
 /* Fill out a visualization_msg to display the odometry graph
  * This function also identifies the loop closure edges and adds them to the
  * loop_closure_edges_ data for further processing
  * */
 
-void G2OSolver::getOdometryGraph(visualization_msgs::MarkerArray &marray)
+void G2OSolver::publishGraphVisualization(visualization_msgs::MarkerArray &marray)
 {
+  // Vertices are round, red spheres
   visualization_msgs::Marker m;
   m.header.frame_id = map_frame_id_;
   m.header.stamp = ros::Time::now();
@@ -230,6 +212,7 @@ void G2OSolver::getOdometryGraph(visualization_msgs::MarkerArray &marray)
   m.color.a = 1.0;
   m.lifetime = ros::Duration(0);
 
+  // Odometry edges are opaque blue line strips 
   visualization_msgs::Marker edge;
   edge.header.frame_id = map_frame_id_;
   edge.header.stamp = ros::Time::now();
@@ -245,12 +228,33 @@ void G2OSolver::getOdometryGraph(visualization_msgs::MarkerArray &marray)
   edge.color.g = 0.0;
   edge.color.b = 1.0;
 
+  // Loop edges are purple, opacity depends on backend state
+  visualization_msgs::Marker loop_edge;
+  loop_edge.header.frame_id = map_frame_id_;
+  loop_edge.header.stamp = ros::Time::now();
+  loop_edge.action = visualization_msgs::Marker::ADD;
+  loop_edge.ns = "karto";
+  loop_edge.id = 0;
+  loop_edge.type = visualization_msgs::Marker::LINE_STRIP;
+  loop_edge.scale.x = 0.1;
+  loop_edge.scale.y = 0.1;
+  loop_edge.scale.z = 0.1;
+  loop_edge.color.a = 1.0;
+  loop_edge.color.r = 1.0;
+  loop_edge.color.g = 0.0;
+  loop_edge.color.b = 1.0;
+ 
   int id = (int)marray.markers.size();
   m.action = visualization_msgs::Marker::ADD;
 
   std::set<int> vertex_ids;
+  // HyperGraph Edges
   for(g2o::SparseOptimizer::EdgeSet::iterator edge_it = optimizer_->edges().begin(); edge_it != optimizer_->edges().end(); ++edge_it)
   {
+    // Is it a unary edge? Need to skip or else die a bad death
+    if( (*edge_it)->vertices().size() < 2 )
+      continue;
+
     int id1, id2;
     g2o::VertexSE2* v1, *v2;
 
@@ -272,12 +276,76 @@ void G2OSolver::getOdometryGraph(visualization_msgs::MarkerArray &marray)
      marray.markers.push_back(visualization_msgs::Marker(edge));
      id++;
    }
-   else
+   else // it's a loop closure
    {
-     edge_pair_t current_edge = std::make_pair<int,int>(v1->id(),v2->id());
-     active_edges_.insert(std::make_pair<edge_pair_t,g2o::EdgeSE2*>(current_edge,dynamic_cast<g2o::EdgeSE2*>(*edge_it)));
-   }
+     g2o::VertexSE2* v1, *v2;
      
+     if((*edge_it)->vertices().size() < 2)
+       continue;
+
+     v1 = dynamic_cast<g2o::VertexSE2 *>((*edge_it)->vertices()[0]);
+     v2 = dynamic_cast<g2o::VertexSE2 *>((*edge_it)->vertices()[1]);
+     
+     geometry_msgs::Point p1, p2;
+     p1.x = v1->estimate()[0];
+     p1.y = v1->estimate()[1];
+     p2.x = v2->estimate()[0];
+     p2.y = v2->estimate()[1];
+
+     if(use_switchable_markers_)
+     {
+       edge_pair_t current_edge = std::make_pair<int,int>(v1->id(),v2->id());
+       loop_status_t::iterator map_iter = loop_closure_status_map_.find(current_edge);
+       if( map_iter == loop_closure_status_map_.end()  ) 
+       {
+         // New loop closure edge, need to create an interactive marker for it
+         visualization_msgs::InteractiveMarker int_marker;
+         int_marker.header.frame_id = "map_calibrated";
+         tf::Vector3 position((p2.x-p1.x)/2 + p1.x, (p2.y-p1.y)/2 + p1.y, 0);
+         tf::pointTFToMsg(position, int_marker.pose.position);
+         int_marker.scale = 1;
+         int_marker.name = "button_" + boost::lexical_cast<std::string>(v1->id()) + "_" + boost::lexical_cast<std::string>(v2->id());
+         int_marker.description = "Loop closure\n(Left Click to Toggle)";
+         visualization_msgs::InteractiveMarkerControl control;
+         control.interaction_mode = visualization_msgs::InteractiveMarkerControl::BUTTON;
+         control.name = int_marker.name + "_control";
+
+         // Create the display options
+         bool edge_status = getEdgeStatus((g2o::OptimizableGraph::Edge *)*edge_it);  // is the edge on or off?
+         visualization_msgs::Marker edge_marker = MakeEdge(int_marker, p1, p2, edge_status);  // when are these updated????
+         control.markers.push_back( edge_marker );
+         visualization_msgs::Marker switch_marker = MakeSwitch( int_marker, p1, p2, edge_status );
+         control.markers.push_back( switch_marker );
+         control.always_visible = true;
+         int_marker.controls.push_back(control);
+
+         server_->insert(int_marker);
+         server_->setCallback(int_marker.name, boost::bind(&G2OSolver::processFeedback, this,_1));
+
+         // Save where appropriate ...
+         loop_closure_status_map_.insert( std::make_pair<edge_pair_t,bool>(current_edge,edge_status) );
+         loop_closure_markers_.insert( std::make_pair<edge_pair_t,visualization_msgs::InteractiveMarker>(current_edge,int_marker) );
+         loop_closure_edges_.insert( std::make_pair<edge_pair_t, g2o::OptimizableGraph::Edge *>(current_edge, (g2o::OptimizableGraph::Edge *)*edge_it) );
+       }
+       else
+       {
+         // Probably where you update the marker positions ...
+       }
+       server_->applyChanges();
+     }
+     else { // normal edges
+       loop_edge.points.clear();
+       loop_edge.points.push_back(p1);
+       loop_edge.points.push_back(p2);
+       loop_edge.id = id++;
+       bool status = getEdgeStatus((g2o::OptimizableGraph::Edge*)*edge_it);
+       loop_edge.color.a = 1.0;
+       if(!status)
+        loop_edge.color.a = 0.25;
+       marray.markers.push_back(visualization_msgs::Marker(loop_edge));
+     }
+  }
+   
    // Check the vertices exist, if not add
    if( vertex_ids.find(v2->id()) == vertex_ids.end() )
    { 
@@ -288,12 +356,12 @@ void G2OSolver::getOdometryGraph(visualization_msgs::MarkerArray &marray)
       vertex_ids.insert(id2);
       marray.markers.push_back(visualization_msgs::Marker(m));
       id++;
-    } 
+   } 
   }  
 }
 
 /* Display the loop closure links */
-void G2OSolver::getLoopClosures(visualization_msgs::MarkerArray &marray)
+/*void G2OSolver::getLoopClosures(visualization_msgs::MarkerArray &marray)
 {
   edge_data_pt_t::iterator edge_it;
   int id=0;
@@ -374,6 +442,7 @@ void G2OSolver::getLoopClosures(visualization_msgs::MarkerArray &marray)
  }
   server_->applyChanges();
 }
+*/
 
 visualization_msgs::Marker G2OSolver::MakeEdge(visualization_msgs::InteractiveMarker &msg, geometry_msgs::Point &p1, geometry_msgs::Point &p2, bool status)
 {
@@ -454,44 +523,28 @@ void G2OSolver::processFeedback( const visualization_msgs::InteractiveMarkerFeed
 
     visualization_msgs::InteractiveMarker marker = loop_closure_markers_.find(edge)->second;
 
+    loop_edge_map_t::iterator it = loop_closure_edges_.find(edge);
+     
+    if(it == loop_closure_edges_.end())
+    {
+      ROS_ERROR("Edge %d to %d not found in active_edges", id1,id2);
+      return;
+    }
+    
     // Update position and check status
     if(current_state == true)
     {
       ROS_INFO("Switching %d to %d OFF", id1, id2);
       marker.controls[0].markers[1].color.r=1.0;
       marker.controls[0].markers[1].color.g=0.0;
-      edge_data_pt_t::iterator it = active_edges_.find(edge);
-      if(it == active_edges_.end())
-      {
-        ROS_ERROR("Edge %d to %d not found in active_edges", id1,id2);
-        return;
-      }
-      g2o::EdgeSE2 e = *it->second; // copy
-      inactive_edges_.insert(std::make_pair<edge_pair_t,g2o::EdgeSE2>(edge,e)); 
-      if(!optimizer_->removeEdge(active_edges_.find(edge)->second)) {
-        ROS_ERROR("Error: Could not find edge between %d and %d in graph",id1,id2);
-        bOK = false;
-        return;
-      }
-      active_edges_.erase(edge);
+      turnEdgeOff(it->second);
     }
     else
     {
       ROS_INFO("Switching %d to %d ON", id1, id2);
       marker.controls[0].markers[1].color.r=0.0;
       marker.controls[0].markers[1].color.g=1.0;
-      // Copy the edge
-      g2o::EdgeSE2 *e = new g2o::EdgeSE2;
-      e->vertices()[0] = inactive_edges_.find(edge)->second.vertices()[0];
-      e->vertices()[1] = inactive_edges_.find(edge)->second.vertices()[1];
-      e->setMeasurement(inactive_edges_.find(edge)->second.measurement());
-      e->setInformation(inactive_edges_.find(edge)->second.information());
-      if(!optimizer_->addEdge(e)) {
-        ROS_ERROR("Error: Could not add edge between %d and %d to graph",id1,id2);
-        bOK = false;
-      }
-      active_edges_.insert(std::make_pair<edge_pair_t,g2o::EdgeSE2*>(edge,e));
-      inactive_edges_.erase(edge); // Deletes original copy
+      turnEdgeOn(it->second);
     }
 
     server_->insert(marker); // should overwrite
@@ -499,14 +552,27 @@ void G2OSolver::processFeedback( const visualization_msgs::InteractiveMarkerFeed
     if(bOK)
     {
       ROS_ERROR("OPTIMIZING after switching edge %d to %d",id1,id2);
-      optimizer_->initializeOptimization();
-      optimizer_->optimize(30);
+      optimizer_->initializeOptimization(0); // OFF is level 1 and will be ignored by the optimizer
+      optimizer_->optimize(optimization_iterations_,online_optimization_);
       ROS_ERROR("DONE");
     }
   }
 }
 
-bool G2OSolver::getEdgeStatus(g2o::EdgeSE2* edge)
+bool G2OSolver::getEdgeStatus(g2o::OptimizableGraph::Edge* edge)
 {
   return true;
 }
+
+bool G2OSolver::turnEdgeOn(g2o::OptimizableGraph::Edge* e)
+{
+ e->setLevel(0);  
+}
+
+bool G2OSolver::turnEdgeOff(g2o::OptimizableGraph::Edge* e)
+{
+  e->setLevel(1);
+}
+
+
+
