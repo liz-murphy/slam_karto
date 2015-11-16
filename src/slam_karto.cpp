@@ -429,6 +429,19 @@ SlamKarto::SlamKarto() :
       ROS_ERROR("The plugin failed to load for some reason. Error: %s", ex.what());
     }
   }
+  else if(solver_type_ == "SRBA")
+  {
+    try
+    {
+      solver_ = solver_loader_.createInstance("karto_plugins::SRBASolver");
+      ROS_INFO("Loaded SRBA solver plugin");
+    }
+    catch(pluginlib::PluginlibException& ex)
+    {
+      ROS_ERROR("The plugin failed to load for some reason. Error: %s", ex.what());
+    }
+  }
+
   mapper_->SetScanSolver(solver_.get());
   solver_->setFrameId(map_frame_);
   
