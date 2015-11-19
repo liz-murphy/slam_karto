@@ -163,6 +163,7 @@ class SlamKarto
     karto::Pose2 initial_pose_;
     tf::Stamped<tf::Pose> initial_odom_;
 
+    std::string laser_name_;
 };
 
 SlamKarto::SlamKarto() :
@@ -564,9 +565,10 @@ SlamKarto::getLaser(const sensor_msgs::LaserScan::ConstPtr& scan)
 
     // Create a laser range finder device and copy in data from the first
     // scan
-    std::string name = scan->header.frame_id;
+    //std::string name = scan->header.frame_id;
+    laser_name_ = scan->header.frame_id;
     karto::LaserRangeFinder* laser = 
-      karto::LaserRangeFinder::CreateLaserRangeFinder(karto::LaserRangeFinder_Custom, karto::Name(name));
+      karto::LaserRangeFinder::CreateLaserRangeFinder(karto::LaserRangeFinder_Custom, karto::Name(laser_name_));
     laser->SetOffsetPose(karto::Pose2(laser_pose.getOrigin().x(),
 				      laser_pose.getOrigin().y(),
 				      yaw));
@@ -689,7 +691,16 @@ SlamKarto::updateMap()
 {
   boost::mutex::scoped_lock(map_mutex_);
 
-  karto::OccupancyGrid* occ_grid = 
+  karto::OccupancyGrid * occ_grid;
+  if(solver_type_ == "SRBA")
+  {
+    std::vector<int> scan_indices;
+    solver_->getActiveIds(scan_indices);
+    occ_grid = 
+          karto::OccupancyGrid::CreateFromScans(mapper_->GetScansById(laser_name_, scan_indices), resolution_);
+  }
+  else
+    occ_grid = 
           karto::OccupancyGrid::CreateFromScans(mapper_->GetAllProcessedScans(), resolution_);
 
   if(!occ_grid)
@@ -824,7 +835,7 @@ SlamKarto::addScan(karto::LaserRangeFinder* laser,
 
     map_to_odom_mutex_.lock();
     map_to_odom_ = tf::Transform(tf::Quaternion( odom_to_map.getRotation() ),
-                                 tf::Point(      odom_to_map.getOrigin() ) ).inverse();
+                                tf::Point(      odom_to_map.getOrigin() ) ).inverse();
     map_to_odom_mutex_.unlock();
 
     // Add the localized range scan to the dataset (for memory management)
