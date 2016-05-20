@@ -4,6 +4,7 @@
 
 #include <open_karto/Mapper.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <nav_msgs/Odometry.h>
 #include <string>
 
 namespace karto {
@@ -13,6 +14,7 @@ class SLAMSolver : public karto::ScanSolver
   public:
     virtual void publishGraphVisualization(visualization_msgs::MarkerArray &marray)=0;
     inline void setFrameId(std::string &frame_id){map_frame_id_=frame_id;};
+    virtual void AddOdom(const nav_msgs::Odometry::ConstPtr &odom);
   protected:
     std::string map_frame_id_;
 };

@@ -62,6 +62,7 @@ class SlamKarto
     ~SlamKarto();
 
     void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan);
+    void odomCallback(const nav_msgs::Odometry::ConstPtr& odom);
     bool mapCallback(nav_msgs::GetMap::Request  &req,
                      nav_msgs::GetMap::Response &res);
 
@@ -209,8 +210,7 @@ SlamKarto::SlamKarto() :
   private_nh_.param("transform_publish_period", transform_publish_period, 0.05);
   double vis_publish_period;
   private_nh_.param("vis_publish_period", vis_publish_period, 2.0);
-  double response_publish_period;
-  private_nh_.param("response_publish_period", response_publish_period, 1.0);
+  double response_publish_period; private_nh_.param("response_publish_period", response_publish_period, 1.0);
 
   if(!private_nh_.getParam("solver_type", solver_type_))
     solver_type_="SPA";
@@ -631,6 +631,12 @@ void SlamKarto::publishGraphVisualization()
  marker_publisher_.publish(marray);
 }
 
+void SlamKarto::odomCallback(const nav_msgs::Odometry::ConstPtr& odom)
+{
+  if(solver_type_ == "G2O")
+    solver_->AddOdom(odom);
+}
+
 void
 SlamKarto::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
 {
@@ -788,7 +794,7 @@ SlamKarto::addScan(karto::LaserRangeFinder* laser,
   
   range_scan->SetOdometricPose(karto_pose);
   range_scan->SetCorrectedPose(karto_pose);
-
+  range_scan->SetTime(tStamp/1e9);
   // Add the localized range scan to the mapper
   bool processed;
   if((processed = mapper_->Process(range_scan)))
