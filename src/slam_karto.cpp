@@ -631,12 +631,6 @@ void SlamKarto::publishGraphVisualization()
  marker_publisher_.publish(marray);
 }
 
-void SlamKarto::odomCallback(const nav_msgs::Odometry::ConstPtr& odom)
-{
-  if(solver_type_ == "G2O")
-    solver_->AddOdom(odom);
-}
-
 void
 SlamKarto::laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
 {
@@ -799,8 +793,6 @@ SlamKarto::addScan(karto::LaserRangeFinder* laser,
   bool processed;
   if((processed = mapper_->Process(range_scan)))
   {
-    //std::cout << "Pose: " << range_scan->GetOdometricPose() << " Corrected Pose: " << range_scan->GetCorrectedPose() << std::endl;
-    
     karto::Pose2 corrected_pose = range_scan->GetCorrectedPose();
 
     // Compute the map->odom transform
